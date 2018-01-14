@@ -14,10 +14,6 @@
 
 package com.google.cloud.hadoop.util;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
 import com.google.api.client.googleapis.json.GoogleJsonError;
 import com.google.api.client.googleapis.json.GoogleJsonError.ErrorInfo;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
@@ -45,6 +41,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+
+import static org.junit.Assert.*;
 
 /**
  * Unit-tests for ApiErrorExtractor class.
@@ -284,6 +282,37 @@ public class ApiErrorExtractorTest {
     IOException nullJsonError = googleJsonResponseException(
         42, null, null, "Top Level HTTP Message");
     assertEquals("Top Level HTTP Message", errorExtractor.getErrorMessage(nullJsonError));
+  }
+
+  @Test
+  public void testUnwrapJsonError() throws IOException {
+    GoogleJsonResponseException withJsonError = googleJsonResponseException(
+          42, "Detail Reason", "Detail message", "Top Level HTTP Message");
+
+    GoogleJsonError originalError = errorExtractor.unwrapJsonError(withJsonError);
+    assertNotNull(originalError);
+    assertEquals(originalError.getCode(), 42);
+    assertEquals(originalError.getMessage(), "Top Level HTTP Message");
+
+    IOException wrappedException = new IOException(withJsonError.getDetails().toString());
+    GoogleJsonError wrappedError = errorExtractor.unwrapJsonError(wrappedException);
+    assertNotNull(wrappedError);
+    assertEquals(wrappedError.getCode(), 42);
+    assertEquals(wrappedError.getMessage(), "Top Level HTTP Message");
+
+    IOException nestedException = new IOException(new IOException(withJsonError.getDetails().toString()));
+    GoogleJsonError nestedError = errorExtractor.unwrapJsonError(nestedException);
+    assertNotNull(nestedError);
+    assertEquals(nestedError.getCode(), 42);
+    assertEquals(nestedError.getMessage(), "Top Level HTTP Message");
+
+    IOException multiException = new IOException();
+    multiException.addSuppressed(new IOException());
+    multiException.addSuppressed(new IOException(new IOException(withJsonError.getDetails().toString())));
+    GoogleJsonError multiError = errorExtractor.unwrapJsonError(multiException);
+    assertNotNull(multiError);
+    assertEquals(multiError.getCode(), 42);
+    assertEquals(multiError.getMessage(), "Top Level HTTP Message");
   }
 
   /**

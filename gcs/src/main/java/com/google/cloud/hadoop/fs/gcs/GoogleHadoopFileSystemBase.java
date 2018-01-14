@@ -17,12 +17,14 @@
 package com.google.cloud.hadoop.fs.gcs;
 
 import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.googleapis.json.GoogleJsonError;
 import com.google.cloud.hadoop.gcsio.CreateFileOptions;
 import com.google.cloud.hadoop.gcsio.DirectoryListCache;
 import com.google.cloud.hadoop.gcsio.FileInfo;
 import com.google.cloud.hadoop.gcsio.GoogleCloudStorageFileSystem;
 import com.google.cloud.hadoop.gcsio.GoogleCloudStorageFileSystemOptions;
 import com.google.cloud.hadoop.gcsio.PathCodec;
+import com.google.cloud.hadoop.util.ApiErrorExtractor;
 import com.google.cloud.hadoop.util.CredentialFactory;
 import com.google.cloud.hadoop.util.EntriesCredentialConfiguration;
 import com.google.cloud.hadoop.util.HadoopCredentialConfiguration;
@@ -654,6 +656,8 @@ public abstract class GoogleHadoopFileSystemBase extends FileSystem
   /** The fixed reported permission of all files. */
   private FsPermission reportedPermissions;
 
+  private ApiErrorExtractor ERROR_EXTRACTOR = new ApiErrorExtractor();
+
   /** Map of counter values */
   protected final ImmutableMap<Counter, AtomicLong> counters = createCounterMap();
 
@@ -1213,7 +1217,8 @@ public abstract class GoogleHadoopFileSystemBase extends FileSystem
    *
    * @param src Source path.
    * @param dst Destination path.
-   * @return true if rename succeeds.
+   * @return true if successful, or false if the old name does not exist
+   * or if the new name already belongs to the namespace.
    * @throws FileNotFoundException if src does not exist.
    * @throws IOException if an error occurs.
    */
@@ -1241,14 +1246,30 @@ public abstract class GoogleHadoopFileSystemBase extends FileSystem
       URI dstPath = getGcsPath(dst);
       gcsfs.rename(srcPath, dstPath);
     } catch (IOException e) {
-      LOG.debug("GHFS.rename", e);
-      return false;
+      if (shouldThrowDuringRename(e)) {
+        throw e;
+      } else {
+        LOG.debug("GHFS.rename", e);
+        return false;
+      }
     }
 
     long duration = System.nanoTime() - startTime;
     increment(Counter.RENAME);
     increment(Counter.RENAME_TIME, duration);
     return true;
+  }
+
+  @VisibleForTesting
+  protected boolean shouldThrowDuringRename(IOException e) {
+    // should resourceNotReady be rethrown?
+    // should accessDeniedNonRecoverable be checked explicitly?
+    GoogleJsonError error = ERROR_EXTRACTOR.unwrapJsonError(e);
+    if (error == null) {
+      return false;
+    }
+    return ERROR_EXTRACTOR.accessDenied(error) ||
+          ERROR_EXTRACTOR.isInternalServerError(error);
   }
 
   /** Delete a file. */
